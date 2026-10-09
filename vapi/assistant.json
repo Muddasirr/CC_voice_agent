@@ -29,7 +29,7 @@
           }
         },
         "server": {
-          "url": "REPLACE_WITH_NGROK_URL/vapi/tools",
+          "url": "https://cc-voice-agent-production.up.railway.app/vapi/tools",
           "headers": { "x-vapi-secret": "REPLACE_WITH_VAPI_WEBHOOK_SECRET" }
         }
       },
@@ -65,7 +65,7 @@
           }
         },
         "server": {
-          "url": "REPLACE_WITH_NGROK_URL/vapi/tools",
+          "url": "https://cc-voice-agent-production.up.railway.app/vapi/tools",
           "headers": { "x-vapi-secret": "REPLACE_WITH_VAPI_WEBHOOK_SECRET" }
         }
       },
@@ -99,7 +99,7 @@
           }
         },
         "server": {
-          "url": "REPLACE_WITH_NGROK_URL/vapi/tools",
+          "url": "https://cc-voice-agent-production.up.railway.app/vapi/tools",
           "headers": { "x-vapi-secret": "REPLACE_WITH_VAPI_WEBHOOK_SECRET" }
         }
       },
@@ -111,7 +111,7 @@
           "parameters": { "type": "object", "properties": {} }
         },
         "server": {
-          "url": "REPLACE_WITH_NGROK_URL/vapi/tools",
+          "url": "https://cc-voice-agent-production.up.railway.app/vapi/tools",
           "headers": { "x-vapi-secret": "REPLACE_WITH_VAPI_WEBHOOK_SECRET" }
         }
       },
@@ -132,7 +132,7 @@
           }
         },
         "server": {
-          "url": "REPLACE_WITH_NGROK_URL/vapi/tools",
+          "url": "https://cc-voice-agent-production.up.railway.app/vapi/tools",
           "headers": { "x-vapi-secret": "REPLACE_WITH_VAPI_WEBHOOK_SECRET" }
         }
       }
@@ -147,7 +147,7 @@
     "model": "nova-2",
     "language": "multi"
   },
-  "serverUrl": "REPLACE_WITH_NGROK_URL/vapi/call-events",
+  "serverUrl": "https://cc-voice-agent-production.up.railway.app/vapi/call-events",
   "serverUrlSecret": "REPLACE_WITH_VAPI_WEBHOOK_SECRET",
   "endCallFunctionEnabled": true,
   "silenceTimeoutSeconds": 20,

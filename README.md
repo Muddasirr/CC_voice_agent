@@ -4,16 +4,22 @@ A voice agent that answers a real phone number, conversationally registers a new
 (or recognizes a returning caller and offers to update their record), and persists the data
 through a REST API backed by SQLite.
 
-## Live Demo
+## Live Demo (for reviewers)
 
-- **Phone number:** +1 (563) 895-7208
-- **API base URL:** `https://copier-refined-gong.ngrok-free.dev`
-- **API docs (Swagger):** `https://copier-refined-gong.ngrok-free.dev/docs`
-- **Dashboard:** `https://copier-refined-gong.ngrok-free.dev/dashboard`
+| Item | Value |
+|---|---|
+| Repository | https://github.com/Muddasirr/CC_voice_agent |
+| US phone number | +1 (563) 895-7208 |
+| API base URL | https://cc-voice-agent-production.up.railway.app |
+| API docs (Swagger) | https://cc-voice-agent-production.up.railway.app/docs |
+| Dashboard | https://cc-voice-agent-production.up.railway.app/dashboard |
+| Credentials | None required — REST API and dashboard are open for review |
 
-> Note: both the phone number (Vapi) and the API (ngrok tunnel to a local process) depend on
-> this machine and its ngrok/uvicorn processes staying up. If either goes stale, see "Known
-> Limitations" for how to bring them back up.
+Suggested smoke test: call the number and register a patient → refresh the dashboard / `GET /patients`
+to confirm persistence. Seed patients `Jane Doe` and `Carlos Martinez` are preloaded.
+
+> API + dashboard run on Railway (always on). Telephony is Vapi calling Railway tool webhooks —
+> **local ngrok does not need to be running** for review.
 
 ## Architecture
 
@@ -45,8 +51,9 @@ REST API (/patients, /patients/:id)  <-- used by both Vapi tools and external cl
   Chosen over Postgres purely for setup speed within the time box (explicitly sanctioned by the
   assessment as an acceptable trade-off). Swapping to Postgres later is a one-line `DATABASE_URL`
   change since access goes entirely through SQLAlchemy.
-- **Hosting: local + ngrok.** Fastest path to a publicly reachable HTTPS webhook for Vapi to call
-  during the review window. See "Known Limitations" for the trade-off this implies.
+- **Hosting: Railway.** FastAPI is deployed at
+  `https://cc-voice-agent-production.up.railway.app` so Vapi tool webhooks and the dashboard stay
+  reachable without a local ngrok tunnel.
 
 ### Why a shared service layer instead of the voice agent calling itself over HTTP twice
 
@@ -129,18 +136,25 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - Run tests: `pytest app/tests -v` (29 tests covering CRUD, validation errors, soft delete,
   persistence, the Vapi tools, appointments, call transcripts, and the dashboard).
 
-### Part 2 — Expose it publicly and wire up Vapi
+### Part 2 — Deploy publicly and wire up Vapi
 
-1. `ngrok http 8000` → copy the `https://...ngrok-free.dev` URL it prints.
+The live demo uses **Railway** (see Live Demo above). To reproduce:
+
+1. Deploy this repo to Railway (or run locally and tunnel with `ngrok http 8000` for a short
+   test). Set `VAPI_WEBHOOK_SECRET` as a Railway/env variable.
 2. Create a free account at [vapi.ai](https://vapi.ai), grab an API key, and add an LLM provider
    key (e.g. OpenAI) in Vapi's dashboard under Provider Keys.
 3. Create a new Assistant and import [`vapi/assistant.json`](vapi/assistant.json) (or paste its
-   `messages[0].content` as the system prompt and recreate the 5 tools manually). Replace every
-   `REPLACE_WITH_NGROK_URL` with your ngrok URL and `REPLACE_WITH_VAPI_WEBHOOK_SECRET` with the
-   same value you put in `.env` as `VAPI_WEBHOOK_SECRET`.
+   `messages[0].content` as the system prompt and recreate the tools manually). Tool `server.url`
+   values already point at the Railway host; set every `REPLACE_WITH_VAPI_WEBHOOK_SECRET` to the
+   same value as `VAPI_WEBHOOK_SECRET`.
 4. Buy/assign a free Vapi phone number to the assistant (Phone Numbers tab).
-5. Call the number. Watch `uvicorn` stdout — every tool call and every saved patient payload is
-   logged there (Observability requirement).
+5. Call the number. Watch Railway (or local uvicorn) logs — every tool call and every saved
+   patient payload is logged there (Observability requirement).
+
+> **Important:** the phone agent only works if Vapi tool/server URLs point at the live API
+> (Railway). Local ngrok is optional for development and is **not** required for review once
+> Railway + Vapi are wired.
 
 ## Environment Variables
 
@@ -206,10 +220,9 @@ All six bonus challenges from the assessment are implemented:
 
 ## Known Limitations & Trade-offs
 
-- **Local + ngrok hosting**: fast to stand up, but the ngrok URL and the backend process only stay
-  alive as long as this machine keeps them running; a real deployment (Railway/Render/Fly) would be
-  needed for a durable, always-on demo. This was a deliberate speed trade-off for the time box.
-- **SQLite**: fine for this dataset/load; would move to Postgres for concurrent writers or multi-instance deployment.
+- **SQLite on Railway**: fine for this dataset/load; the DB file lives on the container
+  filesystem, so data persists across requests while the service stays up, but a full redeploy can
+  wipe it unless a Railway volume is attached (or `DATABASE_URL` points at Postgres).
 - **No auth on the REST API itself** beyond the Vapi webhook secret — acceptable per the assessment
   ("do not store real patient data," no HIPAA requirement), but a real system would need API auth
   (API keys/OAuth) in front of `/patients`.
@@ -227,7 +240,7 @@ All six bonus challenges from the assessment are implemented:
 
 ## Next Steps (if continuing past the time box)
 
-1. Deploy the backend to Railway/Render for a durable public URL instead of ngrok.
+1. Attach a Railway volume (or managed Postgres) so patient data survives redeploys.
 2. Add API-level auth (API key header) in front of `/patients` for anything beyond local demo use.
 3. Wire the end-of-call-report `patient_id` linkage through Vapi's call metadata explicitly
    (currently relies on it being present in `message.metadata`) so every call transcript reliably
