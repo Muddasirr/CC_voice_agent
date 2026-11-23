@@ -1,13 +1,17 @@
 # Voice Patient Registration Agent
 
-[![CI](https://github.com/Muddasirr/CC_voice_agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Muddasirr/CC_voice_agent/actions/workflows/ci.yml)
+[![CI](https://github.com/Muddasirr/voice-patient-intake/actions/workflows/ci.yml/badge.svg)](https://github.com/Muddasirr/voice-patient-intake/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A phone agent for clinics: it answers a real phone number, registers new patients by voice (or recognizes a returning caller and updates their record), and saves everything through a validated REST API.
 
 ## Demo
 
-> **TODO(Muddasir):** the Railway deployment is currently down ("Application not found"). Redeploy it, then add the API docs link here, plus a 60–90 second screen recording: place a call, register a patient, refresh `/dashboard` to show the new record. Don't publish the phone number unless you're happy for strangers to call it.
+- **API docs (Swagger):** https://api-production-93604891.up.railway.app/docs
+- **Dashboard:** https://api-production-93604891.up.railway.app/dashboard
+- **Health:** https://api-production-93604891.up.railway.app/health
+
+> **TODO(Muddasir):** add a 60–90 second screen recording: place a call, register a patient, refresh the dashboard to show the new record.
 
 <!-- ![Call demo](docs/demo.gif) -->
 
