@@ -1,249 +1,118 @@
-# Voice AI Patient Registration System
+# Voice Patient Registration Agent
 
-A voice agent that answers a real phone number, conversationally registers a new patient
-(or recognizes a returning caller and offers to update their record), and persists the data
-through a REST API backed by SQLite.
+[![CI](https://github.com/Muddasirr/CC_voice_agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Muddasirr/CC_voice_agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## Live Demo (for reviewers)
+A phone agent for clinics: it answers a real phone number, registers new patients by voice (or recognizes a returning caller and updates their record), and saves everything through a validated REST API.
 
-| Item | Value |
-|---|---|
-| Repository | https://github.com/Muddasirr/CC_voice_agent |
-| US phone number | +1 (563) 895-7208 |
-| API base URL | https://cc-voice-agent-production.up.railway.app |
-| API docs (Swagger) | https://cc-voice-agent-production.up.railway.app/docs |
-| Dashboard | https://cc-voice-agent-production.up.railway.app/dashboard |
-| Credentials | None required — REST API and dashboard are open for review |
+## Demo
 
-Suggested smoke test: call the number and register a patient → refresh the dashboard / `GET /patients`
-to confirm persistence. Seed patients `Jane Doe` and `Carlos Martinez` are preloaded.
+> **TODO(Muddasir):** the Railway deployment is currently down ("Application not found"). Redeploy it, then add the API docs link here, plus a 60–90 second screen recording: place a call, register a patient, refresh `/dashboard` to show the new record. Don't publish the phone number unless you're happy for strangers to call it.
 
-> API + dashboard run on Railway (always on). Telephony is Vapi calling Railway tool webhooks —
-> **local ngrok does not need to be running** for review.
+<!-- ![Call demo](docs/demo.gif) -->
+
+## Why I built it
+
+I built this as a time-boxed engineering challenge: a voice front desk that collects patient intake details over the phone. The hard part isn't speech; it's making an LLM-driven conversation write **correct** data. The agent can mishear, the caller can change their mind, and the call can drop halfway. So the backend treats the voice agent as an untrusted client: every write goes through the same server-side validation as the public API.
+
+## Features
+
+- **Natural intake over the phone.** The agent asks one or two fields at a time instead of reading a form, and handles mid-call corrections ("actually it's spelled…") and full restarts.
+- **Duplicate detection.** As soon as it has a phone number, it looks the caller up and offers to update the existing record instead of creating a new one.
+- **Confirmation before saving.** The agent reads back the full record and needs a yes before any create or update fires, so nothing half-written lands in the database.
+- **Server-side validation.** Names, date of birth, phone, US state and ZIP are validated in Pydantic. Invalid values come back as field-specific errors that the agent turns into a natural re-ask.
+- **Appointments, transcripts and a dashboard.** It offers to book a first appointment from mock slots, stores the end-of-call transcript and summary, and serves an HTML dashboard of all patients.
+- **Spanish support.** The agent switches language when the caller does, with a multilingual Deepgram transcriber so the speech-to-text keeps up.
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    caller([Caller]) -- phone call --> vapi["Vapi<br/>telephony, STT, TTS,<br/>GPT-4o + tool calls"]
+    vapi -- "POST /vapi/tools<br/>(x-vapi-secret)" --> tools[Tool webhook]
+    vapi -- "POST /vapi/call-events<br/>end-of-call report" --> events[Call events]
+    client([API clients]) --> rest["REST API<br/>/patients"]
+    subgraph FastAPI
+        tools --> crud["crud.py + schemas.py<br/>shared validation"]
+        rest --> crud
+        events --> crud
+        dash["/dashboard"] --> crud
+    end
+    crud --> db[(SQLite / any SQLAlchemy DB)]
 ```
-Phone Call (Caller)
-      |
-      v
-Vapi (Telephony + STT + TTS + LLM orchestration)
-      |  tool calls (function calling) over HTTPS webhook
-      v
-FastAPI backend  --------------------  SQLite (patients.db)
-      |
-      v
-REST API (/patients, /patients/:id)  <-- used by both Vapi tools and external clients
-```
 
-- **Telephony + Voice + LLM orchestration: Vapi.** Vapi owns the phone number, speech-to-text,
-  text-to-speech, turn-taking/interruption handling, and calls an LLM (GPT-4o) with a system
-  prompt and a set of custom "tools" (functions). This gets a natural, low-latency conversational
-  agent without hand-building a media-streaming/STT/TTS pipeline — the highest-leverage shortcut
-  given the 3-hour budget, exactly as suggested in the assessment.
-- **Backend: FastAPI (Python).** Owns all business logic and validation. Two responsibilities:
-  1. A standard REST API (`app/routers/patients.py`) for CRUD on patient records.
-  2. A webhook endpoint (`app/routers/vapi_tools.py`) that Vapi calls mid-conversation to look up,
-     create, or update a patient. This endpoint reuses the exact same service/validation layer
-     (`app/crud.py`, `app/schemas.py`) as the REST API — the voice agent and any other API client
-     go through identical server-side validation, so the agent can never bypass a rule.
-- **Database: SQLite.** File-based, zero setup, and fully sufficient for this data model and load.
-  Chosen over Postgres purely for setup speed within the time box (explicitly sanctioned by the
-  assessment as an acceptable trade-off). Swapping to Postgres later is a one-line `DATABASE_URL`
-  change since access goes entirely through SQLAlchemy.
-- **Hosting: Railway.** FastAPI is deployed at
-  `https://cc-voice-agent-production.up.railway.app` so Vapi tool webhooks and the dashboard stay
-  reachable without a local ngrok tunnel.
+| Layer | Choice | Why |
+|---|---|---|
+| Voice and LLM | [Vapi](https://vapi.ai) with GPT-4o | Handles the phone number, speech-to-text, text-to-speech, interruptions and tool calling, so the time went into conversation design and data correctness instead of a media pipeline. |
+| Backend | FastAPI, SQLAlchemy, Pydantic | One service layer (`app/crud.py`, `app/schemas.py`) used by both the voice webhook and the REST API. |
+| Database | SQLite | Zero setup. Moving to Postgres is a `DATABASE_URL` change. |
+| Hosting | Railway (`Procfile`, `railway.toml`) | Always-on HTTPS endpoint for the Vapi webhooks. |
 
-### Why a shared service layer instead of the voice agent calling itself over HTTP twice
+The prompt and tool schemas live in [`vapi/assistant.json`](vapi/assistant.json), which you can import into the Vapi dashboard.
 
-The Vapi tool webhook (`/vapi/tools`) and the public REST API (`/patients`) both call into
-`app/crud.py` directly against the same DB session — the tool handler doesn't loop back through
-`/patients` over HTTP. This keeps one source of truth for validation and business rules while
-avoiding pointless self-referential network calls in the same process.
-
-## Data Model
-
-See `app/models.py` (SQLAlchemy) and `app/schemas.py` (Pydantic validation). Implements every
-field from the spec: required fields (`first_name`, `last_name`, `date_of_birth`, `sex`,
-`phone_number`, `address_line_1`, `city`, `state`, `zip_code`), optional fields (`email`,
-`address_line_2`, `insurance_provider`, `insurance_member_id`, `preferred_language`,
-`emergency_contact_name`, `emergency_contact_phone`), and auto-generated fields (`patient_id` UUID,
-`created_at`/`updated_at` UTC timestamps, `deleted_at` for soft delete).
-
-Validation enforced **server-side** in `app/schemas.py` (not just trusted from the voice agent):
-- Names: 1–50 chars, letters/hyphens/apostrophes only.
-- Date of birth: valid calendar date, not in the future.
-- Phone numbers: normalized to 10 digits (strips formatting, drops a leading US country code `1`).
-- State: must be a real 2-letter US state abbreviation (full lookup table).
-- Zip: 5-digit or ZIP+4.
-- Sex: enum of the four spec values.
-
-## REST API
+### API
 
 All responses use the envelope `{ "data": ..., "error": ... }`.
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/patients` | List patients. Optional query params: `last_name`, `date_of_birth`, `phone_number`. Excludes soft-deleted records. |
-| GET | `/patients/:id` | Get one patient by `patient_id`. 404 if missing/deleted. |
-| POST | `/patients` | Create a patient. 201 + record on success, 422 on validation error. |
-| PUT | `/patients/:id` | Partial update (only fields provided are changed). |
-| DELETE | `/patients/:id` | Soft delete (`deleted_at` set; row stays in the DB). |
-| GET | `/patients/:id/appointments` | List a patient's scheduled appointments (bonus). |
-| GET | `/patients/:id/calls` | List a patient's stored call transcripts/summaries (bonus). |
-| GET | `/dashboard` | Server-rendered HTML page listing all patients (bonus). |
+| GET | `/patients` | List patients. Optional filters: `last_name`, `date_of_birth`, `phone_number`. Excludes soft-deleted records. |
+| GET | `/patients/{id}` | One patient. 404 if missing or deleted. |
+| POST | `/patients` | Create. 201 on success, 422 on validation error. |
+| PUT | `/patients/{id}` | Partial update. |
+| DELETE | `/patients/{id}` | Soft delete (sets `deleted_at`). |
+| GET | `/patients/{id}/appointments` | The patient's booked appointments. |
+| GET | `/patients/{id}/calls` | Stored call transcripts and summaries. |
+| GET | `/dashboard` | Server-rendered list of all patients. |
+| POST | `/vapi/tools`, `/vapi/call-events` | Vapi webhooks, protected by the `x-vapi-secret` header. |
 
-Plus `GET /health`, `POST /vapi/tools` (the Vapi tool-call webhook), and `POST /vapi/call-events`
-(the Vapi end-of-call-report webhook) — both secured by a shared secret header `x-vapi-secret`.
+## Getting started
 
-## Voice Agent Design
-
-The full system prompt and tool/function schemas live in [`vapi/assistant.json`](vapi/assistant.json)
-(importable into the Vapi dashboard) — comments on *why* each instruction exists are inline in the
-prompt itself. Key design choices:
-
-- **Ask 1–2 fields at a time**, never read the field list as a form — this was the single biggest
-  lever for making the call feel human rather than like an IVR.
-- **Duplicate detection**: as soon as a phone number is captured, the agent silently calls
-  `lookup_patient_by_phone`. If found, it offers to update instead of create (bonus requirement).
-- **Confirmation gate**: the agent must read back the full collected record and get explicit
-  confirmation before any `create_patient`/`update_patient` tool call fires — no silent saves.
-- **Field-specific re-prompting**: invalid data returns `{"success": false, "error": "..."}` from
-  the tool, and the prompt instructs the model to translate that into a natural re-ask of only the
-  broken field, not a restart.
-- **Corrections & restarts**: explicit prompt instructions for both "actually, it's spelled X"
-  mid-collection corrections and a full "start over" request.
-- Optional fields (insurance, emergency contact, preferred language) are offered once, as a single
-  opt-in question, per the assessment's conversational note — never interrogated one by one.
-
-## Setup
-
-### Part 1 — Backend (works standalone, no Vapi account needed)
+**Prerequisites:** Python 3.12 (CI also tests 3.11).
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # edit VAPI_WEBHOOK_SECRET once you have a Vapi account
+pip install -r requirements-dev.txt     # app dependencies + pytest + httpx
+cp .env.example .env                    # set VAPI_WEBHOOK_SECRET
 
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --port 8000
 ```
 
-- Two seed patients (Jane Doe, Carlos Martinez) are inserted automatically on first boot if the
-  table is empty (`app/seed.py`).
-- Swagger UI at `http://localhost:8000/docs`.
-- Run tests: `pytest app/tests -v` (29 tests covering CRUD, validation errors, soft delete,
-  persistence, the Vapi tools, appointments, call transcripts, and the dashboard).
+- Swagger UI: http://localhost:8000/docs
+- Dashboard: http://localhost:8000/dashboard
+- Two seed patients (Jane Doe, Carlos Martinez) are inserted on first boot if the table is empty.
 
-### Part 2 — Deploy publicly and wire up Vapi
+**Run the tests** (29 tests: CRUD, validation errors, soft delete, Vapi tool calls, appointments, call events, dashboard):
 
-The live demo uses **Railway** (see Live Demo above). To reproduce:
+```bash
+pytest app/tests -v
+```
 
-1. Deploy this repo to Railway (or run locally and tunnel with `ngrok http 8000` for a short
-   test). Set `VAPI_WEBHOOK_SECRET` as a Railway/env variable.
-2. Create a free account at [vapi.ai](https://vapi.ai), grab an API key, and add an LLM provider
-   key (e.g. OpenAI) in Vapi's dashboard under Provider Keys.
-3. Create a new Assistant and import [`vapi/assistant.json`](vapi/assistant.json) (or paste its
-   `messages[0].content` as the system prompt and recreate the tools manually). Tool `server.url`
-   values already point at the Railway host; set every `REPLACE_WITH_VAPI_WEBHOOK_SECRET` to the
-   same value as `VAPI_WEBHOOK_SECRET`.
-4. Buy/assign a free Vapi phone number to the assistant (Phone Numbers tab).
-5. Call the number. Watch Railway (or local uvicorn) logs — every tool call and every saved
-   patient payload is logged there (Observability requirement).
-
-> **Important:** the phone agent only works if Vapi tool/server URLs point at the live API
-> (Railway). Local ngrok is optional for development and is **not** required for review once
-> Railway + Vapi are wired.
-
-## Environment Variables
+**Connect a phone number:** deploy the API somewhere public (Railway, or `ngrok http 8000` for a quick test), create a Vapi assistant from `vapi/assistant.json`, replace every `REPLACE_WITH_VAPI_WEBHOOK_SECRET` with your `VAPI_WEBHOOK_SECRET`, point the tool URLs at your host, and assign a Vapi phone number to the assistant.
 
 | Variable | Required | Description |
 |---|---|---|
+| `VAPI_WEBHOOK_SECRET` | Recommended | Checked against the `x-vapi-secret` header on the webhooks. |
+| `DATABASE_URL` | No | SQLAlchemy URL. Defaults to a local SQLite file, `patients.db`. |
 | `PORT` | No | Port for uvicorn (default 8000). |
-| `DATABASE_URL` | No | SQLAlchemy URL, defaults to local SQLite file `patients.db`. |
-| `VAPI_WEBHOOK_SECRET` | Recommended | Shared secret checked against the `x-vapi-secret` header on `/vapi/tools`, so only Vapi (or whoever holds the secret) can trigger writes. |
 
-Vapi itself holds its own keys (Vapi API key, OpenAI key) inside the Vapi dashboard — they never
-touch this codebase, so there's nothing telephony-related to leak from here.
+## Challenges and what I learned
 
-## Observability
+- **One validation path for humans and the LLM.** The tool webhook calls `crud.py` directly instead of calling `/patients` over HTTP. This avoids a pointless network hop inside one process and guarantees the agent can't bypass a rule the REST API enforces.
+- **Turning validation errors into conversation.** A 422 is useless on a phone call. Tool handlers return `{"success": false, "error": "..."}`, and the prompt tells the model to re-ask only the broken field, not restart the intake.
+- **Dropped calls must not leave partial records.** Nothing is written until the caller confirms the full read-back, so a hang-up mid-intake leaves the database untouched. The trade-off is that a long call that drops just before confirmation loses everything collected so far.
+- **Conversation quality was mostly prompt design.** The single biggest improvement was asking for one or two fields at a time instead of reading the form aloud.
+- TODO(Muddasir): add one thing that surprised you during live test calls (a misheard field, a latency issue, an interruption case) and how you fixed it.
 
-Every tool call and every successful create/update logs a structured line to stdout via Python's
-`logging` module, including the full collected patient payload (`app/routers/vapi_tools.py`,
-`app/routers/patients.py`). In production this would ship to a log aggregator; for this exercise,
-stdout satisfies the requirement and is trivially visible during a live review call.
+## Limitations and roadmap
 
-## Edge Cases & Resilience
+- SQLite lives on the container filesystem, so a redeploy can wipe it. Next step: attach a Railway volume or point `DATABASE_URL` at Postgres.
+- `/patients` has no authentication beyond the webhook secret. A real deployment needs API keys or OAuth in front of it.
+- Appointment slots are generated mock data, not a real calendar.
+- Transcripts attach to a patient only when Vapi's call metadata carries a `patient_id`; otherwise they're stored unattached.
+- Agent behavior depends on GPT-4o at call time. The next investment would be an evaluation harness that scores recorded transcripts automatically.
 
-- **Invalid date of birth / phone / state / zip**: rejected by Pydantic validators server-side
-  (422), independent of whatever the voice agent itself already tried to catch. The tool webhook
-  converts these into a `{"success": false, "error": "..."}` payload the LLM is instructed to turn
-  into a natural, field-specific re-prompt.
-- **DB write failure**: `create_patient`/`update_patient` wrap the DB call in try/except and return
-  `success: false` with a message rather than letting an exception propagate to dead air — the
-  prompt explicitly instructs the agent to apologize and explain rather than go silent.
-- **Caller wants to start over**: handled at the prompt level (discard in-progress slot-filling,
-  restart collection) rather than requiring a DB transaction, since nothing is persisted until the
-  final confirmed save.
-- **Telephony connection drops mid-call**: nothing is written to the database until the final
-  confirmed `create_patient`/`update_patient` call, so a dropped call simply results in no partial
-  record — never a half-written patient.
-- **Returning caller**: `lookup_patient_by_phone` runs automatically once a phone number is known,
-  before any other field is collected, so duplicates are caught early rather than after a full
-  intake.
+## License
 
-## Bonus Features Implemented
-
-All six bonus challenges from the assessment are implemented:
-
-- **Duplicate Detection** — `lookup_patient_by_phone` fires as soon as a phone number is captured;
-  if found, the agent offers to update instead of create. Verified live on a real second call.
-- **Appointment Scheduling** — after a successful registration, the agent offers to book a first
-  appointment. `get_available_appointment_slots` returns mock weekday morning/afternoon slots for
-  the next 3 business days; `schedule_appointment` persists the chosen slot to a new `appointments`
-  table (`app/models.py`), linked by `patient_id`. Exposed via `GET /patients/:id/appointments`.
-- **Multi-language Support** — the system prompt instructs the agent to detect "Hablo español" (or
-  similar) and switch the entire conversation to Spanish immediately, no permission-asking. The
-  Deepgram transcriber is configured with `language: "multi"` so it can actually transcribe Spanish
-  speech accurately, not just have the LLM respond in Spanish over English-only STT.
-- **Call Recording/Transcript** — a second Vapi webhook (`POST /vapi/call-events`, configured as the
-  assistant's `serverUrl`) receives Vapi's `end-of-call-report` event, which carries the full
-  transcript and an LLM-generated summary. Stored in a `call_records` table linked to `patient_id`
-  when available. Exposed via `GET /patients/:id/calls`.
-- **Dashboard** — `GET /dashboard` is a self-contained server-rendered HTML page listing every
-  patient (including soft-deleted ones, visually muted) directly from the same database the voice
-  agent writes to. No build step, no JS framework — reloads to show new registrations.
-- **Automated Tests** — 29 pytest tests covering the REST API, the Vapi tool webhook (including
-  the new appointment/call-event tools), and edge cases (invalid data, unknown IDs, malformed
-  payloads). Run with `pytest app/tests -v`.
-
-## Known Limitations & Trade-offs
-
-- **SQLite on Railway**: fine for this dataset/load; the DB file lives on the container
-  filesystem, so data persists across requests while the service stays up, but a full redeploy can
-  wipe it unless a Railway volume is attached (or `DATABASE_URL` points at Postgres).
-- **No auth on the REST API itself** beyond the Vapi webhook secret — acceptable per the assessment
-  ("do not store real patient data," no HIPAA requirement), but a real system would need API auth
-  (API keys/OAuth) in front of `/patients`.
-- **Voice/LLM behavior depends on Vapi + GPT-4o's live behavior** at call time, not something unit
-  tests can fully pin down — the prompt was designed and iterated by reasoning about the transcript
-  it should produce; a full evaluation harness (recorded call transcripts scored automatically)
-  would be the next investment.
-- **Appointment scheduling is mock data**: slots are generated in-process (fixed times over the
-  next 3 business days), not backed by a real calendar/provider system — exactly as the assessment
-  allows ("mock data is fine").
-- **Call transcript linkage**: the end-of-call-report webhook only attaches a transcript to a
-  `patient_id` if the caller's metadata carries one; if a call never reaches a successful
-  create/update (e.g. they hang up mid-intake), the transcript is still stored but unattached
-  (`patient_id: null`) rather than dropped.
-
-## Next Steps (if continuing past the time box)
-
-1. Attach a Railway volume (or managed Postgres) so patient data survives redeploys.
-2. Add API-level auth (API key header) in front of `/patients` for anything beyond local demo use.
-3. Wire the end-of-call-report `patient_id` linkage through Vapi's call metadata explicitly
-   (currently relies on it being present in `message.metadata`) so every call transcript reliably
-   attaches to the right patient, including multi-turn update calls.
-4. Add a real calendar/provider backend behind appointment scheduling instead of mock slots.
-5. Add pagination and search-by-name-substring to the dashboard as the patient list grows.
+[MIT](LICENSE)
