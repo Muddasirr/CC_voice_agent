@@ -2,7 +2,6 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app import crud
