@@ -11,8 +11,6 @@ A phone agent for clinics: it answers a real phone number, registers new patient
 - **Dashboard:** https://api-production-93604891.up.railway.app/dashboard
 - **Health:** https://api-production-93604891.up.railway.app/health
 
-> **TODO(Muddasir):** add a 60–90 second screen recording: place a call, register a patient, refresh the dashboard to show the new record.
-
 <!-- ![Call demo](docs/demo.gif) -->
 
 ## Why I built it
@@ -107,7 +105,6 @@ pytest app/tests -v
 - **Turning validation errors into conversation.** A 422 is useless on a phone call. Tool handlers return `{"success": false, "error": "..."}`, and the prompt tells the model to re-ask only the broken field, not restart the intake.
 - **Dropped calls must not leave partial records.** Nothing is written until the caller confirms the full read-back, so a hang-up mid-intake leaves the database untouched. The trade-off is that a long call that drops just before confirmation loses everything collected so far.
 - **Conversation quality was mostly prompt design.** The single biggest improvement was asking for one or two fields at a time instead of reading the form aloud.
-- TODO(Muddasir): add one thing that surprised you during live test calls (a misheard field, a latency issue, an interruption case) and how you fixed it.
 
 ## Limitations and roadmap
 
